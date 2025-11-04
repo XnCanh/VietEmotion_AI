@@ -1,186 +1,179 @@
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoModel, AutoTokenizer, pipeline
+from transformers import pipeline
 import sqlite3
-import underthesea
+from underthesea import word_tokenize
 from datetime import datetime
+import re
 
+app = Flask(__name__)
 DB_PATH = "sentiment_history.db"
 
-# -------------------------
 # DATABASE
-# -------------------------
 def get_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_db():
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
+    c = conn.cursor()
+    c.execute('''
         CREATE TABLE IF NOT EXISTS sentiments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            text TEXT NOT NULL,
+            original_text TEXT NOT NULL,
+            processed_text TEXT NOT NULL,
             sentiment TEXT NOT NULL,
+            confidence REAL,
             timestamp TEXT NOT NULL
         )
-    """)
+    ''')
     conn.commit()
     conn.close()
 
-def save_result(text, sentiment):
+def save_result(original, processed, sentiment, confidence):
     conn = get_conn()
-    cursor = conn.cursor()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute(
-        "INSERT INTO sentiments (text, sentiment, timestamp) VALUES (?, ?, ?)",
-        (text, sentiment, timestamp)
-    )
+    c = conn.cursor()
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('''
+        INSERT INTO sentiments 
+        (original_text, processed_text, sentiment, confidence, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (original, processed, sentiment, confidence, ts))
     conn.commit()
     conn.close()
 
 def load_history(limit=50):
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT text, sentiment, timestamp FROM sentiments ORDER BY timestamp DESC LIMIT ?",
-        (limit,)
-    )
-    data = cursor.fetchall()
+    c = conn.cursor()
+    c.execute('''
+        SELECT original_text, sentiment, confidence, timestamp 
+        FROM sentiments ORDER BY id DESC LIMIT ?
+    ''', (limit,))
+    rows = c.fetchall()
     conn.close()
-    # trả về list dict cho dễ dùng ở frontend
-    return [{"text": r[0], "sentiment": r[1], "timestamp": r[2]} for r in data]
+    return [
+        {
+            "text": r[0],
+            "sentiment": r[1],
+            "sentiment_display": {
+                "POSITIVE": "Tích cực",
+                "NEGATIVE": "Tiêu cực",
+                "NEUTRAL": "Trung tính"
+            }.get(r[1], r[1]),
+            "sentiment_class": {
+                "POSITIVE": "positive",
+                "NEGATIVE": "negative",
+                "NEUTRAL": "neutral"
+            }.get(r[1], "neutral"),
+            "confidence": round(r[2], 4) if r[2] is not None else None,
+            "timestamp": r[3]
+        } for r in rows
+    ]
 
+# MODEL
+sentiment_pipe = pipeline(
+    "sentiment-analysis",
+    model="wonrax/phobert-base-vietnamese-sentiment",
+    tokenizer="vinai/phobert-base-v2",
+    device=0 if __import__('torch').cuda.is_available() else -1
+)
 
-# -------------------------
-# LOAD MODELS
-# -------------------------
-def load_models():
-    base_tokenizer = AutoTokenizer.from_pretrained("vinai/phobert-base-v2")
-    base_model = AutoModel.from_pretrained("vinai/phobert-base-v2")
-
-    sentiment_pipeline = pipeline(
-        "sentiment-analysis",
-        model="wonrax/phobert-base-vietnamese-sentiment",
-        tokenizer="wonrax/phobert-base-vietnamese-sentiment"
-    )
-    return base_model, base_tokenizer, sentiment_pipeline
-
-base_model, base_tokenizer, sentiment_pipe = load_models()
-
-
-# -------------------------
-# PREPROCESS + RULES
-# -------------------------
-NEUTRAL_KEYWORDS = [
-    "ổn định", "ổn", "bình thường", "ổn thôi", "khá ổn", "ổn thôi",
-    "thuận lợi vừa phải", "tạm ổn", "bình thường thôi"
-]
-
-POSITIVE_KEYWORDS = [
-    "tuyệt", "tốt", "hạnh phúc", "vui", "yêu", "hài lòng", "xuất sắc", "tuyệt vời"
-]
-
-NEGATIVE_KEYWORDS = [
-    "tệ", "không tốt", "buồn", "bực", "ghét", "tồi", "khổ", "mệt"
-]
-
-def preprocess_text(text):
-    text = text.lower()
-    text = text.replace("ko", "không").replace("k", "không")
-    text = text.replace("bt", "bình thường").replace("rat", "rất")
-    return underthesea.word_tokenize(text, format="text")
-
-def contains_any_keyword(text_lower, keywords):
-    for k in keywords:
-        if k in text_lower:
-            return True
-    return False
-
-def map_sentiment_label(label):
-    label = label.upper()
-    if label == "LABEL_0": return "NEGATIVE"
-    if label == "LABEL_1": return "NEUTRAL"
-    if label == "LABEL_2": return "POSITIVE"
-    if label in ["POS", "POSITIVE"]: return "POSITIVE"
-    if label in ["NEG", "NEGATIVE"]: return "NEGATIVE"
-    return "NEUTRAL"
-
-
-# -------------------------
-# CLASSIFY (với rule từ khóa trung tính ưu tiên)
-# -------------------------
-def classify_sentiment(raw_text, base_model, base_tokenizer, sentiment_pipe, confidence_threshold=0.65):
-    raw_trim = (raw_text or "").strip()
-    if len(raw_trim) < 5:
-        return "ERROR", "CÂU QUÁ NGẮN!", 0.0
-
-    text_lower = raw_trim.lower()
-
-    # --- Rule 1 (ưu tiên): nếu chứa từ khóa NEUTRAL -> trả NEUTRAL ngay
-    if contains_any_keyword(text_lower, NEUTRAL_KEYWORDS):
-        save_result(raw_trim, "NEUTRAL")
-        return "SUCCESS", "NEUTRAL", 1.0  # score 1.0 ở đây chỉ để hiển thị, thực tế là rule
-
-    # --- Rule 2 (từ khóa positive/negative trước khi pipeline, nếu muốn)
-    if contains_any_keyword(text_lower, POSITIVE_KEYWORDS):
-        save_result(raw_trim, "POSITIVE")
-        return "SUCCESS", "POSITIVE", 1.0
-    if contains_any_keyword(text_lower, NEGATIVE_KEYWORDS):
-        save_result(raw_trim, "NEGATIVE")
-        return "SUCCESS", "NEGATIVE", 1.0
-
-    # --- fallback: gọi pipeline (mô hình phụ)
-    processed = preprocess_text(raw_trim)
-    try:
-        res = sentiment_pipe(processed)[0]
-        label = map_sentiment_label(res.get("label", "LABEL_1"))
-        score = float(res.get("score", 0.0))
-    except Exception:
-        label, score = "NEUTRAL", 0.0
-
-    # theo đề: nếu score < threshold => NEUTRAL
-    if score < confidence_threshold:
-        label = "NEUTRAL"
-
-    save_result(raw_trim, label)
-    return "SUCCESS", label, score
-
-
-# -------------------------
-# FLASK APP
-# -------------------------
-app = Flask(__name__)
-init_db()
-
-sentiment_map = {
-    "POSITIVE": "Tích cực",
-    "NEUTRAL": "Trung tính",
-    "NEGATIVE": "Tiêu cực",
-    "ERROR": "Lỗi"
+# PREPROCESS: ≤50 ký tự + chuẩn hóa
+NORMALIZE_MAP = {
+    "rat": "rất", "rât": "rất", "rắt": "rất",
+    "hom": "hôm", "hok": "hông",
+    "dc": "được", "đc": "được",
+    "k": "không", "ko": "không",
+    "bt": "bình thường"
 }
 
+def normalize_text(text):
+    text = text.lower()
+    for wrong, correct in NORMALIZE_MAP.items():
+        text = re.sub(r'\b' + re.escape(wrong) + r'\b', correct, text)
+    return text
+
+def preprocess_vietnamese(text):
+    # B1: Chuẩn hóa
+    text = normalize_text(text)
+
+    # B2: GIỚI HẠN ≤50 KÝ TỰ
+    if len(text) > 50:
+        text = text[:50]
+        last_space = text.rfind(' ')
+        if last_space > 35:
+            text = text[:last_space]
+
+    original_trim = text.strip()
+    tokens = word_tokenize(original_trim)
+    processed = " ".join(tokens)
+    return original_trim, processed, tokens
+
+# CLASSIFY: ≥5 ký tự + ≤50 ký tự + POP-UP
+def map_label(label):
+    label = label.upper()
+    if label in ["POS", "LABEL_2"]: return "POSITIVE"
+    if label in ["NEG", "LABEL_0"]: return "NEGATIVE"
+    if label in ["NEU", "LABEL_1"]: return "NEUTRAL"
+    return "NEUTRAL"
+
+def classify_sentiment(raw_text):
+    raw_text = (raw_text or "").strip()
+
+    # KIỂM TRA RỖNG HOẶC < 5 KÝ TỰ
+    if not raw_text:
+        return "ERROR", "Câu không hợp lệ, thử lại", None
+    if len(raw_text) < 5:
+        return "ERROR", "Câu không hợp lệ, thử lại", None
+
+    # Tiền xử lý + GIỚI HẠN ≤50 ký tự
+    original_trim, processed_text, _ = preprocess_vietnamese(raw_text)
+
+    try:
+        result = sentiment_pipe(processed_text, truncation=True, max_length=256)[0]
+        label = map_label(result["label"])
+        score = result["score"]
+    except Exception:
+        return "ERROR", "Lỗi hệ thống, thử lại sau", None
+
+    if score < 0.5:
+        label = "NEUTRAL"
+
+    save_result(original_trim, processed_text, label, score)
+    return "SUCCESS", label, score
+
+# ROUTES
 @app.route("/", methods=["GET"])
 def home():
-    return render_template("index.html", sentiment_map=sentiment_map)
+    return render_template("index.html")
 
 @app.route("/classify", methods=["POST"])
-def classify_api():
-    data = request.json or {}
+def classify():
+    data = request.get_json(silent=True) or {}
     text = data.get("text", "")
-    status, sentiment, score = classify_sentiment(text, base_model, base_tokenizer, sentiment_pipe)
+    status, message, score = classify_sentiment(text)
+    
+    if status == "ERROR":
+        return jsonify({"status": "ERROR", "message": message})
+
+    display_sentiment = {
+        "POSITIVE": "Tích cực",
+        "NEGATIVE": "Tiêu cực",
+        "NEUTRAL": "Trung tính"
+    }.get(message, message)
+
     return jsonify({
-        "status": status,
-        "sentiment": sentiment_map.get(sentiment, sentiment),
-        "score": score
+        "status": "SUCCESS",
+        "sentiment": display_sentiment,
+        "confidence": round(score, 4) if score is not None else None
     })
 
 @app.route("/history", methods=["GET"])
-def history_api():
-    limit = int(request.args.get("limit", 50))
+def history():
+    limit = min(int(request.args.get("limit", 50)), 100)
     data = load_history(limit)
-    # convert sentiment code -> display label
-    for item in data:
-        item["sentiment_display"] = sentiment_map.get(item["sentiment"], item["sentiment"])
     return jsonify({"history": data})
 
+# KHỞI TẠO
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    init_db()
+    print("Server chạy tại: http://127.0.0.1:5000")
+    app.run(host="0.0.0.0", port=5000, debug=False)

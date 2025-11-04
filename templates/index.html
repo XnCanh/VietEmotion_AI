@@ -5,41 +5,39 @@
     <title>Phân Loại Cảm Xúc Tiếng Việt</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='index.css') }}">
-    <link rel="stylesheet" href="/static/index.css">
 </head>
 <body>
     <div class="container">
         <h2 class="title">Phân Loại Cảm Xúc Tiếng Việt</h2>
 
-        <!-- Form nhập -->
         <div class="card">
             <div class="card-first">
                 <div class="card-first-left">
-                    <h5>Nhập câu văn bản:</h5>
+                    <h5>Nhập câu văn bản (5–50 ký tự):</h5>
                     <textarea id="inputText" class="form-control" rows="3" placeholder="VD: Hôm nay tôi rất vui..."></textarea>
+                    <div class="char-count">Ký tự: <span id="charCount">0</span>/50</div>
                     <button class="btn-submit" onclick="classifyText()">Phân loại</button>
-                    <button class="btn-reset" onclick="document.getElementById('inputText').value=''; document.getElementById('result').innerHTML='';">Làm mới</button>
+                    <button class="btn-reset" onclick="resetForm()">Làm mới</button>
                     <div id="result" class="mt-3"></div>
                 </div>
                 <div class="card-first-right">
                     <h5>Bộ test</h5>
                     <div class="btn-group-vertical">
-                        <button onclick="document.getElementById('inputText').value='Tôi rất hạnh phúc khi được giúp đỡ mọi người.';">Test 1</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi cảm thấy buồn vì mất đi người thân.';">Test 2</button>
-                        <button onclick="document.getElementById('inputText').value='Cuộc sống thật bình thường và tẻ nhạt.';">Test 3</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi rất hài lòng với công việc hiện tại.';">Test 4</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi tức giận vì bị đối xử không công bằng.';">Test 5</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi rất hạnh phúc khi được giúp đỡ mọi người.';">Test 6</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi cảm thấy buồn vì mất đi người thân.';">Test 7</button>
-                        <button onclick="document.getElementById('inputText').value='Cuộc sống thật bình thường và tẻ nhạt.';">Test 8</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi rất hài lòng với công việc hiện tại.';">Test 9</button>
-                        <button onclick="document.getElementById('inputText').value='Tôi tức giận vì bị đối xử không công bằng.';">Test 10</button>
+                        <button onclick="setText('Hôm nay tôi rất vui.')">Test 1</button>
+                        <button onclick="setText('Món ăn này dở quá.')">Test 2</button>
+                        <button onclick="setText('Thời tiết bình thường.')">Test 3</button>
+                        <button onclick="setText('Rat vui hom nay.')">Test 4</button>
+                        <button onclick="setText('Công việc ổn định.')">Test 5</button>
+                        <button onclick="setText('Phim này hay lắm.')">Test 6</button>
+                        <button onclick="setText('Tôi buồn vì thất bại.')">Test 7</button>
+                        <button onclick="setText('Ngày mai đi học.')">Test 8</button>
+                        <button onclick="setText('Cảm ơn bạn rất nhiều.')">Test 9</button>
+                        <button onclick="setText('Mệt mỏi quá hôm nay.')">Test 10</button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Lịch sử -->
         <div class="history-section">
             <h5>Lịch sử Phân Loại</h5>
             <div class="main-history">
@@ -49,48 +47,80 @@
                             <th>Thời gian</th>
                             <th>Câu văn</th>
                             <th>Cảm xúc</th>
+                            <th>Độ tin cậy</th>
                         </tr>
                     </thead>
-                    <tbody id="history-body">
-                    </tbody>
+                    <tbody id="history-body"></tbody>
                 </table>
             </div>
         </div>
     </div>
 
 <script>
+    const textarea = document.getElementById('inputText');
+    const charCount = document.getElementById('charCount');
+    
+    textarea.addEventListener('input', () => {
+        const len = textarea.value.length;
+        charCount.textContent = len;
+        charCount.style.color = len > 50 ? 'red' : len < 5 ? 'orange' : '#666';
+    });
+
+    function setText(text) {
+        textarea.value = text;
+        charCount.textContent = text.length;
+    }
+
+    function resetForm() {
+        textarea.value = '';
+        charCount.textContent = '0';
+        document.getElementById('result').innerHTML = '';
+        removePopup();
+    }
+
+    function showPopup(msg) {
+        removePopup();
+        const popup = document.createElement('div');
+        popup.className = 'popup';
+        popup.textContent = msg;
+        document.body.appendChild(popup);
+        setTimeout(removePopup, 3000);
+    }
+
+    function removePopup() {
+        const p = document.querySelector('.popup');
+        if (p) p.remove();
+    }
+
     function escapeHtml(text) {
-        return text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
+        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
     async function loadHistory() {
-        const res = await fetch("/history");
+        const res = await fetch("/history?limit=50");
         const data = await res.json();
-
         const body = document.getElementById("history-body");
         body.innerHTML = "";
-
         data.history.forEach(item => {
-            const row = `
+            const conf = item.confidence !== null ? item.confidence : "N/A";
+            body.innerHTML += `
                 <tr>
                     <td>${item.timestamp}</td>
                     <td>${escapeHtml(item.text)}</td>
                     <td class="${item.sentiment_class}">${item.sentiment_display}</td>
+                    <td>${conf}</td>
                 </tr>
             `;
-            body.innerHTML += row;
         });
     }
 
     function classifyText() {
-        const text = document.getElementById("inputText").value.trim();
+        const text = textarea.value.trim();
         const resultBox = document.getElementById("result");
 
-        if (text.length < 1) {
-            resultBox.innerHTML = `<div class='alert alert-warning'>Vui lòng nhập văn bản.</div>`;
+        if (text.length === 0 || text.length < 5 || text.length > 50) {
+            showPopup("Câu không hợp lệ, thử lại");
+            resultBox.innerHTML = `<div class='alert alert-warning'>Vui lòng nhập 5–50 ký tự.</div>`;
             return;
         }
 
@@ -99,25 +129,33 @@
         fetch("/classify", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: text })
+            body: JSON.stringify({ text })
         })
         .then(res => res.json())
         .then(data => {
-            let cls = "neutral";
+            if (data.status === "ERROR") {
+                showPopup(data.message);
+                resultBox.innerHTML = `<div class='alert alert-danger'>${data.message}</div>`;
+                return;
+            }
 
+            let cls = "neutral";
             if (data.sentiment.includes("Tích cực")) cls = "positive";
             if (data.sentiment.includes("Tiêu cực")) cls = "negative";
 
+            const conf = data.confidence !== null ? ` (độ tin cậy: ${data.confidence})` : "";
+
             resultBox.innerHTML = `
                 <div class="result-box ${cls}">
-                    Kết quả: ${data.sentiment}
+                    Kết quả: <strong>${data.sentiment}</strong>${conf}
                 </div>
             `;
 
             loadHistory();
         })
-        .catch(err => {
-            resultBox.innerHTML = `<div class='alert alert-danger'>Lỗi server!</div>`;
+        .catch(() => {
+            showPopup("Lỗi hệ thống, thử lại sau");
+            resultBox.innerHTML = `<div class='alert alert-danger'>Lỗi kết nối!</div>`;
         });
     }
 
