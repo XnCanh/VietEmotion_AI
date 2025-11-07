@@ -103,6 +103,11 @@ def preprocess_vietnamese(text):
             text = text[:last_space]
 
     original_trim = text.strip()
+
+    if len(original_trim) < 5:
+        return None, None, None
+
+    # Word tokenize
     tokens = word_tokenize(original_trim)
     processed = " ".join(tokens)
     return original_trim, processed, tokens
@@ -123,9 +128,13 @@ def classify_sentiment(raw_text):
         return "ERROR", "Câu không hợp lệ, thử lại", None
     if len(raw_text) < 5:
         return "ERROR", "Câu không hợp lệ, thử lại", None
+    if len(raw_text) > 50:
+        return "ERROR", "Câu không hợp lệ, thử lại", None
 
     # Tiền xử lý + GIỚI HẠN ≤50 ký tự
     original_trim, processed_text, _ = preprocess_vietnamese(raw_text)
+    if not original_trim:
+        return "ERROR", "Câu không hợp lệ, thử lại", None
 
     try:
         result = sentiment_pipe(processed_text, truncation=True, max_length=256)[0]
@@ -137,7 +146,7 @@ def classify_sentiment(raw_text):
     if score < 0.5:
         label = "NEUTRAL"
 
-    save_result(original_trim, processed_text, label, score)
+    save_result(raw_text, processed_text, label, score)
     return "SUCCESS", label, score
 
 # ROUTES
