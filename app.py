@@ -8,7 +8,6 @@ import re
 app = Flask(__name__)
 DB_PATH = "sentiment_history.db"
 
-# DATABASE
 def get_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -68,7 +67,6 @@ def load_history(limit=50):
         } for r in rows
     ]
 
-# MODEL
 sentiment_pipe = pipeline(
     "sentiment-analysis",
     model="wonrax/phobert-base-vietnamese-sentiment",
@@ -76,7 +74,7 @@ sentiment_pipe = pipeline(
     device=0 if __import__('torch').cuda.is_available() else -1
 )
 
-# PREPROCESS: ≤50 ký tự + chuẩn hóa
+# Tiền xử lý: ≤50 ký tự + chuẩn hóa
 NORMALIZE_MAP = {
     "rat": "rất", "rât": "rất", "rắt": "rất",
     "hom": "hôm", "hok": "hông",
@@ -92,10 +90,10 @@ def normalize_text(text):
     return text
 
 def preprocess_vietnamese(text):
-    # B1: Chuẩn hóa
+    # Chuẩn hóa
     text = normalize_text(text)
 
-    # B2: GIỚI HẠN ≤50 KÝ TỰ
+    # Giới hạn độ dài ký tự
     if len(text) > 50:
         text = text[:50]
         last_space = text.rfind(' ')
@@ -107,12 +105,12 @@ def preprocess_vietnamese(text):
     if len(original_trim) < 5:
         return None, None, None
 
-    # Word tokenize
+    # Tách từ
     tokens = word_tokenize(original_trim)
     processed = " ".join(tokens)
     return original_trim, processed, tokens
 
-# CLASSIFY: ≥5 ký tự + ≤50 ký tự + POP-UP
+# PHÂN LOẠI: ≥5 ký tự + ≤50 ký tự + POP-UP
 def map_label(label):
     label = label.upper()
     if label in ["POS", "LABEL_2"]: return "POSITIVE"
@@ -123,7 +121,7 @@ def map_label(label):
 def classify_sentiment(raw_text):
     raw_text = (raw_text or "").strip()
 
-    # KIỂM TRA RỖNG HOẶC < 5 KÝ TỰ
+    # Kiểm tra độ dài câu
     if not raw_text:
         return "ERROR", "Câu không hợp lệ, thử lại", None
     if len(raw_text) < 5:
@@ -131,7 +129,7 @@ def classify_sentiment(raw_text):
     if len(raw_text) > 50:
         return "ERROR", "Câu không hợp lệ, thử lại", None
 
-    # Tiền xử lý + GIỚI HẠN ≤50 ký tự
+    # Tiền xử lý + Giới hạn độ dài ký tự
     original_trim, processed_text, _ = preprocess_vietnamese(raw_text)
     if not original_trim:
         return "ERROR", "Câu không hợp lệ, thử lại", None
@@ -149,7 +147,6 @@ def classify_sentiment(raw_text):
     save_result(raw_text, processed_text, label, score)
     return "SUCCESS", label, score
 
-# ROUTES
 @app.route("/", methods=["GET"])
 def home():
     return render_template("index.html")
@@ -181,7 +178,6 @@ def history():
     data = load_history(limit)
     return jsonify({"history": data})
 
-# KHỞI TẠO
 if __name__ == "__main__":
     init_db()
     print("Server chạy tại: http://127.0.0.1:5000")

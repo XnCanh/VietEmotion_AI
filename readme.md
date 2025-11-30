@@ -24,8 +24,8 @@ pip
 Internet để tải model lần đầu  
 
 4.2.Clone dự án   
-git clone https://github.com/yourusername/vietnamese-sentiment-assistant.git   
-cd vietnamese-sentiment-assistant   
+git clone https://github.com/XnCanh/VietEmotion_AI.git  
+cd VietEmotion_AI  
 
 4.3.Tạo môi trường ảo (Windows)   
 python -m venv venv   
@@ -40,7 +40,6 @@ pip install -r requirements.txt
  ┣ 📂 templates/                  # Lưu giữ cấu hình html giao diện chính   
  ┣ app.py                         # file chạy chính  
  ┣ sentiments_history.db           # SQLite helper  
- ┣ Emmotion.py                     # mô hình transpose  
  ┣ requirements.txt   
  ┗ README.md  
 
